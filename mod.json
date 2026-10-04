@@ -1,10 +1,10 @@
 {
-    "name": "mod-template",
-    "displayName": "Mod Template",
-    "description": "Mindustry Java mod template, complete with EntityAnno integration.",
+    "name": "riskod",
+    "displayName": "RiskOfDustry",
+    "description": "Mindustry but roguelike.",
     "version": "1.0.0",
     "minGameVersion": "160",
-    "author": "You",
+    "author": "Otamamori",
     "java": true,
-    "main": "template.ModTemplate"
+    "main": "riskod.RiskOfDustryLoader"
 }

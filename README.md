@@ -1,5 +1,7 @@
 # `MindustryModTemplate`
 
+
+2. Run `gradlew jar` [1];
 [Mindustry](https://github.com/Anuken/Mindustry) Java mod template, otherwise known as JAR-modding, complete with [`EntityAnno`](https://github.com/GglLfr/EntityAnno) and syntax downgrader integration, works for both Android and PC.
 
 ## Using
