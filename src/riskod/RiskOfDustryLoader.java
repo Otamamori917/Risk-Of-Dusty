@@ -23,7 +23,7 @@ import riskod.world.RiskodMaps;
 import riskod.world.RiskodPlanet;
 import riskod.world.RunHooks;
 import riskod.world.unit.PlayerCharUnitType;
-import template.gen.EntityRegistry;
+import riskod.gen.EntityRegistry;
 
 import static mindustry.Vars.ui;
 
