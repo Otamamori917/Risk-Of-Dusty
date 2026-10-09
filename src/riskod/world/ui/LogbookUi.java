@@ -22,6 +22,7 @@ import arc.struct.ObjectFloatMap;
 import arc.struct.ObjectMap;
 import arc.struct.ObjectSet;
 import arc.struct.Seq;
+import arc.util.Scaling;
 import arc.util.Strings;
 import arc.util.Time;
 import mindustry.Vars;
@@ -40,49 +41,38 @@ import riskod.world.meta.Meta;
 import riskod.world.relic.GearType;
 import riskod.world.relic.RelicType;
 import riskod.world.run.EnemySpawnDirector;
+import riskod.world.run.HeroKitPrefs;
 import riskod.world.run.PlayerLoadout;
+import riskod.world.unit.HeroAlt;
 import riskod.world.unit.PlayerCharUnitType;
 
+import java.text.SimpleDateFormat;
 import java.util.Comparator;
+import java.util.Date;
 
-/** Tabbed meta-progression logbook: relics, enemies, maps, heros, stats and run history. */
+/**
+ * Tabbed meta-progression logbook.
+ */
 public class LogbookUi {
     static final String[] TABS = {"relics", "enemies", "maps", "heros", "stats", "history"};
     static final String[] TAB_NAMES = {"Relics", "Enemies", "Maps", "Heros", "Stats", "History"};
     static final String[] PIE_TABS = {"Time played", "Win / loss", "Run time", "Died to", "Damage dealt"};
 
-    /// Tab currently shown in the dialog.
     static String tab = "relics";
-
-    /// Entry key waiting to be selected the next time an entry tab is built.
     static String pendingKey;
-
-    /// Tab buttons of the open dialog, kept so jumps can move the highlight.
     static final TextButton[] tabButtons = new TextButton[TABS.length];
-
-    /// Rebuilds the body of the open dialog.
     static Runnable rebuildBody;
-
-    /// Sub-tab shown in the stats hero charts.
     static int pieTab = 0;
 
-    /// Seconds the final confirm button stays locked after it appears.
     static final float RESET_LOCKOUT = 3f;
-
-    /// Side length of the mini ability squares on hero cards.
     static final float SQUARE = 44f;
-
-    /// Color of clickable text that jumps to another entry.
     static final Color LINK = Color.valueOf("9be7ff");
-
     static final Color WIN = Color.valueOf("8fd16a");
     static final Color LOSS = Color.valueOf("ff7a7a");
     static final Color OTHER = Color.valueOf("777777");
-
-    /// How far loss slices are darkened toward black compared with the same hero's win slice.
     static final float LOSS_SHADE = 0.45f;
+    static final Color LOCKED_SIL = Color.valueOf("2a2a2a");
 
-    /// Slice colors, assigned by hero or enemy position so they stay stable between chart tabs.
     static final Color[] PALETTE = {
             Color.valueOf("ff9be0"), Color.valueOf("9bffc8"), Color.valueOf("ffe08a"), Color.valueOf("9be7ff"),
             Color.valueOf("ffb06b"), Color.valueOf("b49bff"), Color.valueOf("8fd16a"), Color.valueOf("ff7a7a")
@@ -94,6 +84,7 @@ public class LogbookUi {
         TextureRegion icon;
         boolean unlocked;
         boolean header;
+        String unlockText = "";
         Cons<Table> card;
     }
 
@@ -137,7 +128,6 @@ public class LogbookUi {
             float dx = lx - width / 2f, dy = ly - height / 2f;
             float r = Math.min(width, height) / 2f;
             if (dx * dx + dy * dy > r * r) return null;
-
             float a = Angles.angle(dx, dy);
             float from = 0f;
             for (int i = 0; i < slices.size; i++) {
@@ -152,12 +142,10 @@ public class LogbookUi {
         public void draw() {
             float cx = x + width / 2f, cy = y + height / 2f;
             float r = Math.min(width, height) / 2f - 2f;
-
             if (border) {
                 Draw.color(Color.black, parentAlpha);
                 Fill.circle(cx, cy, r + 3f);
             }
-
             float from = 0f;
             for (int i = 0; i < slices.size; i++) {
                 Slice s = slices.get(i);
@@ -177,14 +165,38 @@ public class LogbookUi {
         return e;
     }
 
-    static Entry entry(String key, String name, TextureRegion icon, boolean unlocked, Cons<Table> card) {
+    static Entry entry(String key, String name, TextureRegion icon, boolean unlocked, String unlockText, Cons<Table> card) {
         Entry e = new Entry();
         e.key = key;
         e.name = name;
         e.icon = icon == null ? Icon.info.getRegion() : icon;
         e.unlocked = unlocked;
+        e.unlockText = unlockText == null ? "" : unlockText;
         e.card = card;
         return e;
+    }
+
+    static Entry entry(String key, String name, TextureRegion icon, boolean unlocked, Cons<Table> card) {
+        return entry(key, name, icon, unlocked, "", card);
+    }
+
+    /** Logbook: found at least once. */
+    static boolean relicLogbookUnlocked(RelicType r) {
+        if (r == null) return false;
+        Meta.RelicStat s = Meta.relic(r.name);
+        return s != null && s.found > 0;
+    }
+
+    /** Logbook: at least one win with this hero. */
+    static boolean heroLogbookUnlocked(PlayerCharUnitType h) {
+        if (h == null) return false;
+        Meta.HeroStat s = Meta.hero(h.name);
+        return s != null && s.wins > 0;
+    }
+
+    static boolean enemyUnlocked(String name) {
+        Meta.EnemyStat s = Meta.enemy(name);
+        return s != null && (s.kills > 0 || s.deaths > 0);
     }
 
     public static void show() {
@@ -208,9 +220,7 @@ public class LogbookUi {
                 b.setChecked(id.equals(tab));
                 tabButtons[i] = b;
             }
-        }).size(w,36).growX().row();
-
-
+        }).size(w, 36).growX().row();
 
         d.cont.add(body).size(w, h);
 
@@ -234,7 +244,6 @@ public class LogbookUi {
         d.show();
     }
 
-    /** Switches to a tab and selects the entry with the given key, if it is unlocked. */
     static void jump(String tabId, String key) {
         tab = tabId;
         pendingKey = key;
@@ -268,6 +277,7 @@ public class LogbookUi {
             d.hide();
             RiskodMaps.exitRun();
             Meta.reset();
+            HeroKitPrefs.sanitizeAll();
             after.run();
         }).size(260f, 56f).get();
 
@@ -303,7 +313,14 @@ public class LogbookUi {
             }
             cardHolder.clear();
             cardHolder.top().left();
-            entries.get(idx).card.get(cardHolder);
+            Entry e = entries.get(idx);
+            if (e.unlocked) {
+                e.card.get(cardHolder);
+            } else {
+                cardHolder.add("[accent]Locked[]").left().padBottom(6f).row();
+                cardHolder.add(e.unlockText.isEmpty() ? "???" : e.unlockText)
+                        .wrap().width(380f).left();
+            }
         };
 
         ScrollPane listPane = body.pane(list -> {
@@ -317,18 +334,31 @@ public class LogbookUi {
                 int idx = i;
                 Table row = new Table(Tex.button);
                 row.left();
-                row.image(e.icon).size(32f).padRight(8f).color(e.unlocked ? Color.white : Color.darkGray);
-                row.add(e.unlocked ? e.name : "???").color(e.unlocked ? Color.white : Color.gray).left().growX();
                 if (e.unlocked) {
-                    row.touchable = Touchable.enabled;
-                    row.clicked(() -> select.get(idx));
+                    row.image(e.icon).scaling(Scaling.fit).size(60f).padRight(8f);
                 } else {
-                    row.touchable = Touchable.disabled;
+                    row.add(new Element() {
+                        @Override
+                        public void draw() {
+                            float cx = x + width / 2f;
+                            float cy = y + height / 2f;
+
+                            Draw.shader(FlatIconShader.instance);
+                            Draw.color(Color.valueOf("383838"));
+                            Draw.rect(e.icon, cx, cy, e.icon.width, e.icon.height, 0);
+                            Draw.shader();
+                            Draw.reset();
+                        }
+                    }).scaling(Scaling.fit).size(60f).padRight(8f);
                 }
+                row.add(e.unlocked ? e.name : "???")
+                        .color(e.unlocked ? Color.white : Color.gray).left().growX();
+                row.touchable = Touchable.enabled;
+                row.clicked(() -> select.get(idx));
                 rows[i] = row;
-                list.add(row).growX().minHeight(44f).pad(2f).row();
+                list.add(row).growX().minHeight(60f).pad(2f).row();
             }
-        }).width(270f).growY().padRight(10f).get();
+        }).width(400f).growY().padRight(10f).get();
 
         body.pane(cardHolder).grow();
 
@@ -377,23 +407,12 @@ public class LogbookUi {
                 }
             }
         }
-
         Seq<RelicType> out = new Seq<>();
         for (RelicType r : RelicType.all) {
             if (starting.contains(r) && !(r instanceof GearType)) continue;
             out.add(r);
         }
         return out;
-    }
-
-    static boolean heroUnlocked(String name) {
-        Meta.HeroStat s = Meta.hero(name);
-        return s != null && s.wins > 0;
-    }
-
-    static boolean enemyUnlocked(String name) {
-        Meta.EnemyStat s = Meta.enemy(name);
-        return s != null && (s.kills > 0 || s.deaths > 0);
     }
 
     static Seq<Entry> relicEntries() {
@@ -403,7 +422,6 @@ public class LogbookUi {
             else if (r.slotKind == RelicType.SlotKind.passive) passives.add(r);
             else others.add(r);
         }
-
         Seq<Entry> out = new Seq<>();
         addRelicGroup(out, "Passives", passives);
         addRelicGroup(out, "Abilities", others);
@@ -416,8 +434,16 @@ public class LogbookUi {
         list.sort(Comparator.comparingInt(a -> a.rarity));
         out.add(header(title));
         for (RelicType r : list) {
-            Meta.RelicStat s = Meta.relic(r.name);
-            out.add(entry(r.name, r.localizedName, r.icon, s != null && s.found > 0, t -> relicCard(t, r)));
+            boolean open = relicLogbookUnlocked(r);
+            String req;
+            if (!r.unlocked()) {
+                req = r.unlock != null ? r.unlock.describe() : "Locked";
+            } else if (!open) {
+                req = "Find this relic at least once";
+            } else {
+                req = "";
+            }
+            out.add(entry(r.name, r.localizedName, r.icon, open, req, t -> relicCard(t, r)));
         }
     }
 
@@ -433,7 +459,6 @@ public class LogbookUi {
                 if (!enemies.contains(t)) bosses.addUnique(t);
             }
         }
-
         Seq<Entry> out = new Seq<>();
         addEnemyGroup(out, "Enemies", enemies);
         addEnemyGroup(out, "Bosses", bosses);
@@ -445,7 +470,8 @@ public class LogbookUi {
         list.sort((a, b) -> Float.compare(a.health, b.health));
         out.add(header(title));
         for (UnitType u : list) {
-            out.add(entry(u.name, u.localizedName, u.uiIcon, enemyUnlocked(u.name), t -> enemyCard(t, u)));
+            out.add(entry(u.name, u.localizedName, u.uiIcon, enemyUnlocked(u.name),
+                    "Kill or die to this unit", t -> enemyCard(t, u)));
         }
     }
 
@@ -455,11 +481,12 @@ public class LogbookUi {
             if (!s.unfinished) list.add(s);
         }
         list.sort((a, b) -> Float.compare(a.difficulty, b.difficulty));
-
         Seq<Entry> out = new Seq<>();
         for (RiskodSector s : list) {
             Meta.MapStat m = Meta.map(s.name);
-            out.add(entry(s.name, s.localizedName, s.uiIcon, m != null && m.escapes > 0, t -> mapCard(t, s)));
+            boolean open = m != null && m.escapes > 0;
+            out.add(entry(s.name, s.localizedName, s.uiIcon, open,
+                    "Escape this sector via teleporter", t -> mapCard(t, s)));
         }
         return out;
     }
@@ -467,7 +494,16 @@ public class LogbookUi {
     static Seq<Entry> heroEntries() {
         Seq<Entry> out = new Seq<>();
         for (PlayerCharUnitType h : PlayerCharUnitType.selectable) {
-            out.add(entry(h.name, h.localizedName, h.uiIcon, heroUnlocked(h.name), t -> heroCard(t, h)));
+            boolean open = heroLogbookUnlocked(h);
+            String req;
+            if (!h.unlocked()) {
+                req = h.unlock != null ? h.unlock.describe() : "Locked";
+            } else if (!open) {
+                req = "Win a run as this hero";
+            } else {
+                req = "";
+            }
+            out.add(entry(h.name, h.localizedName, h.uiIcon, open, req, t -> heroCard(t, h)));
         }
         return out;
     }
@@ -488,6 +524,7 @@ public class LogbookUi {
         Meta.RelicStat s = Meta.relic(r.name);
         title(t, r.localizedName);
         line(t, "Type", kindLabel(r));
+        if (typeLabel(r) != null) line(t, "Applys to", typeLabel(r));
         line(t, "Rarity", rarityLabel(r.rarity));
         if (r.requiredHero != null) line(t, "Hero", r.requiredHero.localizedName);
         if (r.onlyHeroes.any()) line(t, "Heroes", r.onlyHeroes.toString(", ", u -> u.localizedName));
@@ -498,7 +535,6 @@ public class LogbookUi {
         pct(t, "Ability damage", r.abilityDamageMul);
         pct(t, "Ability range", r.abilityRangeMul);
         pct(t, "Ability cooldown", r.abilityCooldownMul);
-        pct(t, "Ability reload", r.abilityReloadMul);
         pct(t, "Gear cooldown", r.gearCooldownMul);
         pct(t, "Luck", r.luckMul);
         pct(t, "Pulse interval", r.pulseIntervalMul);
@@ -509,7 +545,23 @@ public class LogbookUi {
         if (r.grantFocus != 0) line(t, "Focus on pickup", signed(r.grantFocus));
         if (r.bonusOrbCapacity != 0) line(t, "Orb capacity", signed(r.bonusOrbCapacity));
         if (r.bonusEnergyCap != 0f) line(t, "Energy cap", signed(r.bonusEnergyCap));
-        if (r.plasmaBankPermanent) line(t, "Plasma bank", "permanent");
+        if (r.plasmaBankPermanent) line(t, "Excess Energy", "no longer expires");
+        if (r.mrBones) line(t, "Lucky break", "\nPrevents Death if teleporter has at least [stat]25%[] charge \nthen [scarlet]self destructs[]");
+        if (r.obelisk) line(t, "Ominous",
+                "\nReduces [stat]All[] slots cooldowns by [stat]" + (PlayerLoadout.OBELISK_BONUS * 100) + "%[] \nper consecutive slot used without using the same slot twice in a row \nCaps out at [stat]" + (int) ((1 + (1 - PlayerLoadout.OBELISK_HARDCAP)) * 100) + "%[]");
+        if (r.negativeObelisk) line(t, "Negative Ominous",
+                "\nIncreases [stat]All[] slot's Damage by [stat]" + (PlayerLoadout.NEGATIVE_OBELISK_BONUS * 100) + "%[] \nper consecutive use of the same slot without using a different slot \nCaps out at [stat]" + (int) (PlayerLoadout.NEGATIVE_OBELISK_HARDCAP * 100) + "%[]");
+        if (r.stuntMan) line(t, "Daring",
+                """
+                        Reduces max charges of [stat]ALL[] slots by [scarlet]2[].
+                        If a slot has insufficient charges, \nit gains [scarlet]+10%[] cooldown per missing charge instead.
+                        Grants [stat]+20%[] damage and range to [stat]ALL[] slots.""");
+        if (r.smeared) line(t, "Confusion",
+                """
+                        \nbuffs that effect only the [stat]Primary[] slot: \n  |> now also apply to the [stat]Utility[] slot
+                        buffs that effect only the [stat]Secondary[] slot: \n  |> now also apply to the [stat]Special[] slot
+                        buffs that effect only the [stat]Utility[] slot: \n  |> now also apply to the [stat]Primary[] slot
+                        buffs that effect only the [stat]Special[] slot: \n  |> now also apply to the [stat]Secondary[] slot""");
 
         if (r instanceof GearType g) {
             line(t, "Charges", String.valueOf(g.maxCharges));
@@ -531,7 +583,7 @@ public class LogbookUi {
 
         section(t, "Record");
         line(t, "Found", s == null ? "0" : String.valueOf(s.found));
-        if (r.slotKind == RelicType.SlotKind.passive) {
+        if (r.slotKind == RelicType.SlotKind.passive && !r.unstackable) {
             line(t, "Most stacked at once", s == null ? "0" : String.valueOf(s.maxStack));
         }
     }
@@ -539,7 +591,6 @@ public class LogbookUi {
     static String relicBody(RelicType r) {
         StringBuilder sb = new StringBuilder();
         if (r.description != null && !r.description.isEmpty()) sb.append(r.description);
-
         String extra = null;
         if (r.ability instanceof DefectAbility d) {
             extra = AbilityGlossary.defectBody(d, new DefectState());
@@ -549,7 +600,6 @@ public class LogbookUi {
         } else if (r.ability instanceof ChargedAbility c) {
             extra = AbilityGlossary.chargedBody(c, null, -1);
         }
-
         if (extra != null) {
             if (sb.length() > 0) sb.append("\n\n");
             sb.append(extra);
@@ -566,7 +616,6 @@ public class LogbookUi {
         line(t, "Size", fmt(u.hitSize));
         line(t, "Range", Strings.autoFixed(u.range / 8f, 1) + " blocks");
         if (u.flying) line(t, "Movement", "flying");
-
         section(t, "Record");
         line(t, "Killed", s == null ? "0" : String.valueOf(s.kills));
         line(t, "Died to", s == null ? "0" : String.valueOf(s.deaths));
@@ -579,7 +628,6 @@ public class LogbookUi {
         line(t, "Difficulty", fmt(p.difficulty));
         if (p.minChests >= 0) line(t, "Chests", p.minChests + " - " + p.maxChests);
         if (p.minShrines >= 0) line(t, "Shrines", p.minShrines + " - " + p.maxShrines);
-
         section(t, "Record");
         line(t, "Escaped via teleporter", m == null ? "0" : String.valueOf(m.escapes));
         line(t, "Shrines activated", m == null ? "0" : String.valueOf(m.shrines));
@@ -610,18 +658,23 @@ public class LogbookUi {
         line(t, "Health", fmt(h.health));
         line(t, "Speed", Strings.autoFixed(h.speed, 2));
         line(t, "Size", fmt(h.hitSize));
+        if (h.flying) line(t, "Flying", "true");
 
         KitSwapAbility swap = heroKitSwap(h);
         RelicType swapRelic = null;
         if (swap != null && h.startingSlots != null) {
             for (RelicType r : h.startingSlots) {
-                if (r != null && r.ability == swap) swapRelic = r;
+                if (r != null && r.ability == swap) {
+                    swapRelic = r;
+                    break;
+                }
             }
         }
 
         if (swap != null && swap.kits.length > 0) {
-            section(t, "Kits");
-            for (int i = 0; i < swap.kits.length; i++) {
+            section(t, "Default kits");
+            int base = swap.baseKitCount > 0 ? Math.min(swap.baseKitCount, swap.kits.length) : swap.kits.length;
+            for (int i = 0; i < base; i++) {
                 KitSwapAbility.Kits k = swap.kits[i];
                 if (k == null) continue;
                 String kitName = k.name == null || k.name.isEmpty() ? "Kit " + (i + 1) : k.name;
@@ -647,7 +700,8 @@ public class LogbookUi {
             for (int i = 0; i < h.startingSlots.length; i++) {
                 RelicType r = h.startingSlots[i];
                 if (r == null) continue;
-                if (swap != null && i < KitSwapAbility.KIT_FLEX && r != swapRelic) continue;
+                if (swap != null && i < KitSwapAbility.KIT_FLEX) continue;
+                if (swap != null && r == swapRelic) continue;
                 any = true;
                 loadout.add(square(r, i)).size(SQUARE).pad(2f);
             }
@@ -655,16 +709,89 @@ public class LogbookUi {
         if (any) t.add(loadout).left().row();
         else t.add("None").color(Color.gray).left().row();
 
+        if (swap != null && swap.kits.length > (swap.baseKitCount > 0 ? swap.baseKitCount : swap.kits.length)) {
+            section(t, "Alternate kits");
+            int base = swap.baseKitCount > 0 ? Math.min(swap.baseKitCount, swap.kits.length) : swap.kits.length;
+            for (int i = base; i < swap.kits.length; i++) {
+                KitSwapAbility.Kits k = swap.kits[i];
+                if (k == null) continue;
+                boolean locked = k.unlock != null && !k.unlock.met();
+                String kitName = k.name == null || k.name.isEmpty() ? "Kit " + (i + 1) : k.name;
+                if (!locked) t.add("[accent]" + kitName + "[]").left().padTop(4f).row();
+                if (locked && k.unlock != null) {
+                    t.add(k.unlock.describe()).color(Color.lightGray).wrap().width(380f).left().row();
+                } else if (k.description != null && !k.description.isEmpty()) {
+                    t.add(k.description).color(Color.lightGray).wrap().width(380f).left().row();
+                }
+                if (!locked) {
+                    Table squares = new Table();
+                    squares.left();
+                    for (int j = 0; j < KitSwapAbility.KIT_FLEX; j++) {
+                        RelicType kr = k.slot(j);
+                        if (kr != null) squares.add(square(kr, j)).size(SQUARE).pad(2f);
+                    }
+                    t.add(squares).left().row();
+                }
+            }
+        } else if (swap != null && swap.kits.length > 0) {
+            boolean anyLocked = false;
+            for (KitSwapAbility.Kits k : swap.kits) {
+                if (k != null && k.unlock != null && !k.unlock.met()) {
+                    anyLocked = true;
+                    break;
+                }
+            }
+            if (anyLocked) {
+                section(t, "Kit unlocks");
+                for (int i = 0; i < swap.kits.length; i++) {
+                    KitSwapAbility.Kits k = swap.kits[i];
+                    if (k == null || k.unlock == null || k.unlock.met()) continue;
+                    String kitName = k.name == null || k.name.isEmpty() ? "Kit " + (i + 1) : k.name;
+                    t.add("[gray]" + kitName + "[]").left().padTop(2f).row();
+                    t.add(k.unlock.describe()).color(Color.lightGray).wrap().width(380f).left().row();
+                }
+            }
+        }
+
+        String[] lab = {"Primary", "Secondary", "Utility", "Special", "Gear"};
+        boolean anyAlt = false;
+        for (int slot = 0; slot < PlayerLoadout.SLOT_COUNT; slot++) {
+            Seq<HeroAlt> alts = h.altsFor(slot);
+            if (alts == null || alts.isEmpty()) continue;
+            if (!anyAlt) {
+                section(t, "Alternate abilities");
+                anyAlt = true;
+            }
+            t.add("[accent]" + lab[slot] + "[]").left().padTop(4f).row();
+            Table row = new Table();
+            row.left();
+            for (HeroAlt a : alts) {
+                if (a.relic == null) continue;
+                if (!a.unlocked()) {
+                    t.add("[gray]" + a.unlock.describe() + "[]").left().padTop(2f).row();
+                    continue;
+                }
+                row.add(square(a.relic, slot)).size(SQUARE).pad(2f);
+            }
+            t.add(row).left().row();
+        }
+
+        desc(t, h.details);
+
         section(t, "Record");
         line(t, "Runs", s == null ? "0" : String.valueOf(s.runs));
         line(t, "Wins", s == null ? "0" : String.valueOf(s.wins));
         line(t, "Highest level", s == null ? "0" : String.valueOf(s.highestLevel));
         line(t, "Time played", formatTime(s == null ? 0f : s.timePlayed));
+        if (!h.unlocked()) {
+            section(t, "Play unlock");
+            t.add(h.unlock != null ? h.unlock.describe() : "Locked").color(Color.lightGray).wrap().width(380f).left().row();
+        }
     }
 
     static void historyCard(Table t, Meta.RunRecord rec) {
         title(t, heroName(rec.hero) + (rec.win ? " - Win" : " - Loss"));
-        line(t, "Date", new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm").format(new java.util.Date(rec.date)));
+        line(t, "Date", new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date(rec.date)));
         if (!rec.win && rec.killedBy != null) {
             UnitType killer = Vars.content.unit(rec.killedBy);
             line(t, "Killed by", killer == null ? rec.killedBy : killer.localizedName);
@@ -728,6 +855,7 @@ public class LogbookUi {
             line(t, "Shrines activated", String.valueOf(s.shrines));
             line(t, "Relic chests opened", String.valueOf(s.relicChests));
             line(t, "Drone chests opened", String.valueOf(s.droneChests));
+            line(t, "Interactables used", String.valueOf(s.interactables));
 
             section(t, "Heroes");
             Table pieBody = new Table();
@@ -785,7 +913,7 @@ public class LogbookUi {
     }
 
     static Runnable heroJump(PlayerCharUnitType h) {
-        if (!heroUnlocked(h.name)) return null;
+        if (!heroLogbookUnlocked(h)) return null;
         return () -> jump("heros", h.name);
     }
 
@@ -1026,6 +1154,28 @@ public class LogbookUi {
             case ability -> "Ability";
             case weapon -> "Weapon";
             case gear -> "Gear";
+        };
+    }
+
+    static String typeLabel(RelicType r) {
+        return switch (r.slotKind) {
+            case passive -> switch (r.bonusApplyTo) {
+                case primary -> "Primary";
+                case secondary -> "Secondary";
+                case utility -> "Utility";
+                case special -> "Special";
+                case gear -> "Gear";
+                case allMain -> "All Abilities";
+                case ALL -> "All Slots";
+            };
+            case ability -> switch (r.equipApplyto) {
+                case primary -> "Primary";
+                case secondary -> "Secondary";
+                case utility -> "Utility";
+                case special -> "Special";
+                default -> null;
+            };
+            case weapon, gear -> null;
         };
     }
 

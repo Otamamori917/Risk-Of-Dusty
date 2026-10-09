@@ -16,6 +16,7 @@ public class RunStatsUi {
     public static void show(RunState run, boolean victory) {
         if (run == null || Vars.ui == null) return;
 
+
         Dialog d = new Dialog(victory ? "Run Complete" : "Run Over");
         d.cont.add(victory ? "The moon is yours." : "Hero fallen").padBottom(8f).row();
         d.cont.add("Time: " + formatTime(run.runTime)).left().row();

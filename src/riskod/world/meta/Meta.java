@@ -3,15 +3,20 @@ package riskod.world.meta;
 import arc.files.Fi;
 import arc.func.Prov;
 import arc.struct.ObjectMap;
+import arc.struct.ObjectSet;
 import arc.struct.Seq;
 import arc.util.Log;
 import arc.util.Time;
 import arc.util.serialization.Json;
 import arc.util.serialization.JsonWriter;
 import mindustry.Vars;
+import mindustry.type.Sector;
+import mindustry.type.UnitType;
 import riskod.world.RiskodMaps;
 import riskod.world.RiskodMaps.RiskodSector;
+import riskod.world.relic.RelicType;
 import riskod.world.run.RunState;
+import riskod.world.unit.PlayerCharUnitType;
 
 /** Persistent meta-progression: logbook unlocks, lifetime stats and run history, stored as JSON in the data directory. */
 public class Meta {
@@ -57,6 +62,19 @@ public class Meta {
         public int escapes;
         public int runsWon;
         public int runsLost;
+
+        // unlock / progress tracking
+        public int interactables;
+        public int gearUses;
+        public int perfectCounters;
+        public int bestRunRelics;
+        public int bestRunDrones;
+        public int bestRunItems;
+        public int bestRunKills;
+        public float bestRunDamage;
+        public int bestStage;
+        public int bestLevel;
+        public ObjectMap<String, Integer> relicsByRarity = new ObjectMap<>();
     }
 
     public static class RunRecord {
@@ -84,6 +102,10 @@ public class Meta {
         public ObjectMap<String, HeroStat> heroes = new ObjectMap<>();
         public Totals totals = new Totals();
         public Seq<RunRecord> history = new Seq<>();
+
+        /** Keys like "relic:name", "hero:name", "map:name" — console force unlock/lock. */
+        public ObjectSet<String> forcedUnlocks = new ObjectSet<>();
+        public ObjectSet<String> forcedLocks = new ObjectSet<>();
     }
 
     /// Ticks between disk writes while data keeps changing.
@@ -136,7 +158,18 @@ public class Meta {
         if (!f.exists()) return;
         try {
             Data d = json().fromJson(Data.class, f);
-            if (d != null) data = d;
+            if (d != null) {
+                data = d;
+                if (data.totals == null) data.totals = new Totals();
+                if (data.totals.relicsByRarity == null) data.totals.relicsByRarity = new ObjectMap<>();
+                if (data.forcedUnlocks == null) data.forcedUnlocks = new ObjectSet<>();
+                if (data.forcedLocks == null) data.forcedLocks = new ObjectSet<>();
+                if (data.history == null) data.history = new Seq<>();
+                if (data.relics == null) data.relics = new ObjectMap<>();
+                if (data.enemies == null) data.enemies = new ObjectMap<>();
+                if (data.maps == null) data.maps = new ObjectMap<>();
+                if (data.heroes == null) data.heroes = new ObjectMap<>();
+            }
         } catch (Throwable t) {
             Log.err("Riskod: could not read " + f.name() + ", keeping a backup copy", t);
             try {
@@ -183,6 +216,55 @@ public class Meta {
         return entry(data().maps, p.name, MapStat::new);
     }
 
+    static String forceKey(String kind, String name) {
+        return kind + ":" + name;
+    }
+
+    public static boolean isForcedUnlocked(String kind, String name) {
+        if (name == null) return false;
+        Data d = data();
+        String k = forceKey(kind, name);
+        if (d.forcedLocks.contains(k)) return false;
+        return d.forcedUnlocks.contains(k);
+    }
+
+    public static boolean isForcedLocked(String kind, String name) {
+        if (name == null) return false;
+        return data().forcedLocks.contains(forceKey(kind, name));
+    }
+
+    /** Console / dev: unlock content for play (and clear forced lock). */
+    public static void forceUnlock(String kind, String name) {
+        if (name == null || name.isEmpty()) return;
+        Data d = data();
+        String k = forceKey(kind, name);
+        d.forcedLocks.remove(k);
+        d.forcedUnlocks.add(k);
+        dirty = true;
+        save();
+    }
+
+    /** Console / dev: force lock content for play (overrides natural UnlockReq). */
+    public static void forceLock(String kind, String name) {
+        if (name == null || name.isEmpty()) return;
+        Data d = data();
+        String k = forceKey(kind, name);
+        d.forcedUnlocks.remove(k);
+        d.forcedLocks.add(k);
+        dirty = true;
+        save();
+    }
+
+    public static void clearForce(String kind, String name) {
+        if (name == null || name.isEmpty()) return;
+        Data d = data();
+        String k = forceKey(kind, name);
+        d.forcedUnlocks.remove(k);
+        d.forcedLocks.remove(k);
+        dirty = true;
+        save();
+    }
+
     public static void relicObtained(String name, int stack) {
         Data d = data();
         RelicStat s = entry(d.relics, name, RelicStat::new);
@@ -205,6 +287,7 @@ public class Meta {
         if (m == null) return;
         m.shrines++;
         data().totals.shrines++;
+        interactableUsed();
         dirty = true;
     }
 
@@ -213,6 +296,7 @@ public class Meta {
         if (m == null) return;
         m.relicChests++;
         data().totals.relicChests++;
+        interactableUsed();
         dirty = true;
     }
 
@@ -221,6 +305,7 @@ public class Meta {
         if (m == null) return;
         m.droneChests++;
         data().totals.droneChests++;
+        interactableUsed();
         dirty = true;
     }
 
@@ -229,6 +314,49 @@ public class Meta {
         if (m == null) return;
         m.escapes++;
         data().totals.escapes++;
+        dirty = true;
+    }
+
+    public static void interactableUsed() {
+        data().totals.interactables++;
+        dirty = true;
+    }
+
+    public static void gearUsed() {
+        data().totals.gearUses++;
+        dirty = true;
+    }
+
+    public static void perfectCounter() {
+        data().totals.perfectCounters++;
+        dirty = true;
+    }
+
+    public static void noteRelicRarity(int rarity) {
+        Totals t = data().totals;
+        if (t.relicsByRarity == null) t.relicsByRarity = new ObjectMap<>();
+        String key = String.valueOf(Math.max(1, rarity));
+        t.relicsByRarity.put(key, t.relicsByRarity.get(key, 0) + 1);
+        dirty = true;
+    }
+
+    public static int relicsOfRarity(int rarity) {
+        Totals t = data().totals;
+        if (t.relicsByRarity == null) return 0;
+        return t.relicsByRarity.get(String.valueOf(Math.max(1, rarity)), 0);
+    }
+
+    /** Call on sector end / run end with peak run stats for UnlockReq single-run checks. */
+    public static void noteRunPeaks(RunState run) {
+        if (run == null) return;
+        Totals t = data().totals;
+        t.bestRunRelics = Math.max(t.bestRunRelics, run.relicsObtained);
+        t.bestRunItems = Math.max(t.bestRunItems, run.itemsObtained);
+        t.bestRunKills = Math.max(t.bestRunKills, run.kills);
+        t.bestRunDamage = Math.max(t.bestRunDamage, run.damageDealt);
+        t.bestStage = Math.max(t.bestStage, run.stage);
+        t.bestLevel = Math.max(t.bestLevel, run.level);
+        t.bestRunDrones = Math.max(t.bestRunDrones, run.peakDrones);
         dirty = true;
     }
 
@@ -264,7 +392,6 @@ public class Meta {
         dirty = true;
     }
 
-
     public static void reset() {
         data = new Data();
         flushTimer = 0f;
@@ -278,6 +405,31 @@ public class Meta {
             h.highestLevel = level;
             dirty = true;
         }
+    }
+
+    public static void noteFound(RelicType r) {
+        if (r == null) return;
+        RelicStat s = entry(data().relics, r.name, RelicStat::new);
+        s.found = Math.max(s.found, 1);
+        noteRelicRarity(r.rarity);
+        dirty = true;
+        save();
+    }
+
+    public static void noteFound(UnitType u) {
+        if (u == null) return;
+        HeroStat s = entry(data().heroes, u.name, HeroStat::new);
+        s.wins = Math.max(s.wins, 1);
+        dirty = true;
+        save();
+    }
+
+    public static void noteFound(Sector s) {
+        if (s == null) return;
+        MapStat m = entry(data().maps, s.name(), MapStat::new);
+        m.escapes = Math.max(m.escapes, 1);
+        dirty = true;
+        save();
     }
 
     public static void runFinished(RunState run, boolean win) {
@@ -300,6 +452,8 @@ public class Meta {
             t.runsLost++;
             if (run.lastHitBy != null) entry(d.enemies, run.lastHitBy, EnemyStat::new).deaths++;
         }
+
+        noteRunPeaks(run);
 
         RunRecord r = new RunRecord();
         r.win = win;

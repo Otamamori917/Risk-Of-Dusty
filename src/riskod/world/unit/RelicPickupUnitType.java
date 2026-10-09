@@ -2,6 +2,7 @@ package riskod.world.unit;
 
 import arc.graphics.g2d.Draw;
 import arc.math.Mathf;
+import arc.struct.IntIntMap;
 import arc.struct.IntMap;
 import arc.util.Time;
 import mindustry.entities.Units;
@@ -18,6 +19,9 @@ import riskod.world.ui.RelicPickupToast;
 public class RelicPickupUnitType extends UnitType {
     public static RelicPickupUnitType shared;
     public static final IntMap<RelicType> carried = new IntMap<>();
+
+    /// Shrine count a chant recorded for a pickup, by unit id; absent for ordinary pickups.
+    public static final IntIntMap carriedShrines = new IntIntMap();
 
     public float pickupRange = 18f;
 
@@ -71,41 +75,53 @@ public class RelicPickupUnitType extends UnitType {
             }
         }
 
+        if (give(player, relic, carriedShrines.get(unit.id, 0))) {
+            carried.remove(unit.id);
+            carriedShrines.remove(unit.id, 0);
+            unit.remove();
+        }
+    }
+
+    /** Gives a relic straight to a hero the way picking one up does; returns true when the relic was taken. */
+    public static boolean give(Unit player, RelicType relic) {
+        return give(player, relic, 0);
+    }
+
+    /** Same as give, recording the shrine count a chant gave this copy. */
+    public static boolean give(Unit player, RelicType relic, int shrines) {
+        if (player == null || !player.isValid() || relic == null) return false;
+        if (!(player.type instanceof PlayerCharUnitType)) return false;
+
         PlayerLoadout loadout = PlayerCharUnitType.loadout(player);
-        if (loadout == null) return;
+        if (loadout == null) return false;
 
         KitSwapAbility kitSwap = KitSwapAbility.find(loadout);
-        if (kitSwap != null
-                && relic.slotKind != RelicType.SlotKind.passive
-                && relic.slotKind != RelicType.SlotKind.gear
-                && relic.equipSlot >= 0 && relic.equipSlot <= 2) {
+        if (kitSwap != null && relic.slotKind != RelicType.SlotKind.passive && relic.slotKind != RelicType.SlotKind.gear && relic.equipApplyto.ordinal() <= 2) {
 
-            if (kitSwap.tryOverride(player, loadout, relic, relic.equipSlot)) {
-                loadout.onPickedUp(player, relic);
+            if (kitSwap.tryOverride(player, loadout, relic, relic.equipApplyto.ordinal())) {
+                loadout.onPickedUp(player, relic, shrines);
                 RelicPickupToast.show(relic, "kit override");
                 if (RunState.active()) {
                     RunState.current.unlockLogbook(relic);
                     RunState.current.noteRelic(relic, 1);
                 }
-                carried.remove(unit.id);
-                unit.remove();
-                return;
+                return true;
             }
 
             RelicPickupToast.show(relic, "already used in another kit");
-            return;
+            return false;
         }
 
-        if (loadout.tryPickup(relic)) {
-            loadout.onPickedUp(player, relic);
+        if (loadout.tryPickup(relic, false, 0, shrines)) {
+            loadout.onPickedUp(player, relic, shrines);
             RelicPickupToast.show(relic, relic.slotKind.name());
             if (RunState.active()) {
                 RunState.current.unlockLogbook(relic);
                 RunState.current.noteRelic(relic, stackOf(loadout, relic));
             }
-            carried.remove(unit.id);
-            unit.remove();
+            return true;
         }
+        return false;
     }
 
     static int stackOf(PlayerLoadout loadout, RelicType relic) {
@@ -119,17 +135,23 @@ public class RelicPickupUnitType extends UnitType {
 
     @Override
     public void draw(Unit unit) {
-        super.draw(unit);
         RelicType relic = relicOf(unit);
         if (relic != null && relic.icon != null) {
-            Draw.rect(relic.icon, unit.x, unit.y + Mathf.sin(Time.time, 16f, 2f), 8f, 8f);
+            Draw.rect(relic.icon, unit.x, unit.y + Mathf.sin(Time.time, 16f, 2f));
         }
     }
 
     public static Unit spawn(float x, float y, RelicType relic) {
+        return spawn(x, y, relic, 0);
+    }
+
+    public static Unit spawn(float x, float y, RelicType relic, int shrines) {
         if (relic == null || shared == null) return null;
         Unit u = shared.spawn(Team.derelict, x, y);
-        if (u != null) carried.put(u.id, relic);
+        if (u != null) {
+            carried.put(u.id, relic);
+            if (shrines != 0) carriedShrines.put(u.id, shrines);
+        }
         return u;
     }
 }

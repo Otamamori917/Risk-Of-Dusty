@@ -25,6 +25,8 @@ public class RunHooks {
         registered = true;
 
         AbilityBarHud.register();
+        HeroLock.register();
+        HeroSelectUi.register();
 
         Events.on(EventType.ClientLoadEvent.class, e ->
                 arc.Core.app.post(RiskodMaps::refreshStartUnlocks));

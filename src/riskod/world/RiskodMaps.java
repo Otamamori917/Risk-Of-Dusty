@@ -33,7 +33,8 @@ public class RiskodMaps {
     public static void load() {
         addEasy("idk", 0).unfinished = true;
 
-        RiskodSector fortress = addEasy("riskod-abandoned-fortess", 1)
+        RiskodSector fortress = addEasy("abandoned-fortess", 1)
+
                 .chests(4, 10)
                 .shrines(1, 3)
                 .teleporter((Teleporter) RiskodCont.teleporter, UnitTypes.mace, UnitTypes.fortress)
@@ -45,8 +46,9 @@ public class RiskodMaps {
 
         fortress.rareBossRelicChance = 0.2f;
         fortress.difficulty = 2;
+        fortress.localizedName = "[#024b30]Abandoned Fortress[]";
 
-        RiskodSector monument = addEasy("riskod-smoldering-monument", 2)
+        RiskodSector monument = addEasy("smoldering-monument", 2)
                 .chests(16, 28)
                 .shrines(1, 2)
                 .teleporter((Teleporter) RiskodCont.teleporter)
@@ -58,6 +60,8 @@ public class RiskodMaps {
 
         monument.rareBossRelicChance = 0.2f;
         monument.difficulty = 5;
+        monument.localizedName = "[orange]Smoldering Monument[]";
+        monument.generateIcons = true;
 
 
         addEasy("idk-1", 3).unfinished = true;
@@ -113,7 +117,7 @@ public class RiskodMaps {
                 s != null
                         && !s.unfinished
                         && (RunState.current == null || !RunState.usedMaps.contains(s.name)));
-        if (left.isEmpty()) return null; // do NOT reuse
+        if (left.isEmpty()) return null;
         return left.random();
     }
 
@@ -185,7 +189,7 @@ public class RiskodMaps {
             allowLaunchSchematics = false;
             overrideLaunchDefaults = true;
             requireUnlock = false;
-            difficulty = pool == Pool.easy ? 2 : pool == Pool.hard ? 6 : pool == Pool.launch ? 8 : 10;
+            //difficulty = pool == Pool.easy ? 2 : pool == Pool.hard ? 6 : pool == Pool.launch ? 8 : 10;
         }};
     }
 

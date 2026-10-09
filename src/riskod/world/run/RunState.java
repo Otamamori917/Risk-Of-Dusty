@@ -1,21 +1,35 @@
 package riskod.world.run;
 
+import arc.Core;
+import arc.math.Mathf;
+import arc.struct.ObjectIntMap;
+import arc.struct.ObjectSet;
 import arc.struct.Seq;
 import arc.util.Strings;
 import arc.util.Time;
 import arc.util.io.Reads;
 import arc.util.io.Writes;
 import mindustry.Vars;
+import mindustry.content.StatusEffects;
+import mindustry.core.GameState;
+import mindustry.game.Team;
+import mindustry.gen.Groups;
 import mindustry.gen.Unit;
 import mindustry.type.Item;
+import mindustry.type.Sector;
 import mindustry.type.UnitType;
 import riskod.world.RiskodPlanet;
 import riskod.world.abilites.KitSwapAbility;
+import riskod.world.block.Teleporter;
 import riskod.world.defect.DefectState;
 import riskod.world.defect.DefectUnitType;
 import riskod.world.meta.Meta;
+import riskod.world.relic.GearType;
 import riskod.world.relic.RelicType;
+import riskod.world.ui.RelicPickupToast;
 import riskod.world.ui.RunStatsUi;
+import riskod.world.unit.ChantDroneType;
+import riskod.world.unit.CompanionDroneType;
 import riskod.world.unit.PlayerCharUnitType;
 
 import java.io.ByteArrayInputStream;
@@ -46,7 +60,7 @@ public class RunState {
     public final Seq<RelicType> logbook = new Seq<>();
     public static final Seq<String> usedMaps = new Seq<>();
 
-    public PlayerLoadout pendingLoadout;
+    public static PlayerLoadout pendingLoadout;
 
     public float damageDealt;
     public int kills;
@@ -55,7 +69,20 @@ public class RunState {
     public float healingReceived;
     public int itemsObtained;
     public int relicsObtained;
+    public int peakDrones;
     public final Seq<String> relicNames = new Seq<>();
+
+    /// Shrines activated on the current sector; any paid activation counts, successful or not.
+    public int shrinesThisSector;
+
+    /// Shrine count recorded for each equipped (non-passive) chant relic type when it was last given; kept across sectors.
+    public final ObjectIntMap<String> chantShrines = new ObjectIntMap<>();
+
+    /// Living companion drones captured when leaving a sector, waiting to be respawned in the next one.
+    public final Seq<CarriedDrone> carriedDrones = new Seq<>();
+
+    /// Sector the carried drones were captured in; they respawn once a different sector is loaded.
+    Sector carriedFrom;
 
     /** Enemy unit type that last damaged the hero, credited when the run ends in a loss. */
     public String lastHitBy;
@@ -71,16 +98,31 @@ public class RunState {
     public static final float XP_BASE = 100f;
     public static final float XP_GROWTH = 1.4f;
 
+    /// Bonus scale added per shrine counted when a chant relic/drone is given.
+    public static final float CHANT_SCALE_PER_SHRINE = 1.25f;
+
+    public static final ObjectSet<String> consumedUniques = new ObjectSet<>();
+
     static final String K_HERO = "riskod.hero", K_STAGE = "riskod.stage", K_LEVEL = "riskod.level",
             K_XP = "riskod.xp", K_TIME = "riskod.time", K_KILLS = "riskod.kills", K_BOSSES = "riskod.bosses",
             K_DAMAGE = "riskod.damage", K_TMULT = "riskod.tmult", K_CHARGED = "riskod.charged",
             K_SPAWNS = "riskod.spawns", K_USED = "riskod.used", K_LOGBOOK = "riskod.logbook",
             K_LOADOUT = "riskod.loadout", K_DMGIN = "riskod.dmgin", K_HEAL = "riskod.heal",
-            K_ITEMS = "riskod.items", K_RELICS = "riskod.relics", K_RELICNAMES = "riskod.relicnames";
+            K_ITEMS = "riskod.items", K_RELICS = "riskod.relics", K_RELICNAMES = "riskod.relicnames",
+            K_SHRINES = "riskod.shrines", K_CHANT = "riskod.chant", K_DRONES = "riskod.chantdrones", K_UNIQUES = "riskod.uniques";
     static final String[] KEYS = {K_HERO, K_STAGE, K_LEVEL, K_XP, K_TIME, K_KILLS, K_BOSSES, K_DAMAGE,
-            K_TMULT, K_CHARGED, K_SPAWNS, K_USED, K_LOGBOOK, K_LOADOUT, K_DMGIN, K_HEAL, K_ITEMS, K_RELICS, K_RELICNAMES};
+            K_TMULT, K_CHARGED, K_SPAWNS, K_USED, K_LOGBOOK, K_LOADOUT, K_DMGIN, K_HEAL, K_ITEMS, K_RELICS, K_RELICNAMES,
+            K_SHRINES, K_CHANT, K_DRONES,K_UNIQUES};
 
     static final String RUN_MAP_SETTING = "riskod-run-map";
+
+    public static class CarriedDrone {
+        public String type;
+        public int shrines;
+        public String gear;
+        public int gearCharges;
+        public float gearCd;
+    }
 
     public static RunState start(UnitType hero) {
         KitSwapAbility.clearAll();
@@ -124,6 +166,84 @@ public class RunState {
         return current == null ? 1 : Math.max(1, current.teleporterMult);
     }
 
+    /** Bonus scale for an equipped chant relic type: zero until it has been given, then shrines-when-given x 1.25. */
+    public static float chantScale(String name) {
+        if (current == null || name == null) return 0f;
+        return current.chantShrines.get(name, 0) * CHANT_SCALE_PER_SHRINE;
+    }
+
+    /** Records the current sector's shrine count for an equipped chant relic type; replaces any earlier record. */
+    public void setChantScale(String name) {
+        if (name == null) return;
+        chantShrines.put(name, shrinesThisSector);
+    }
+
+    public void noteShrine() {
+        if (!active()) return;
+        shrinesThisSector++;
+    }
+
+    static boolean heroPresent() {
+        if (Vars.player == null) return false;
+        Unit u = Vars.player.unit();
+        return u != null && u.isValid() && u.type instanceof PlayerCharUnitType;
+    }
+
+    void captureDrones() {
+        carriedDrones.clear();
+        carriedFrom = Vars.state != null && Vars.state.rules != null ? Vars.state.rules.sector : null;
+        if (Vars.player == null) return;
+
+        Team team = Vars.player.team();
+        Groups.unit.each(u -> {
+            if (u.team != team || !u.isValid() || !(u.type instanceof CompanionDroneType)) return;
+
+            CarriedDrone c = new CarriedDrone();
+            c.type = u.type.name;
+            if (u.type instanceof ChantDroneType) c.shrines = ChantDroneType.shrinesById.get(u.id, 0);
+
+            CompanionDroneType.ActionState s = CompanionDroneType.ActionState.get(u);
+            if (s.gear != null) {
+                c.gear = s.gear.name;
+                c.gearCharges = s.gearCharges;
+                c.gearCd = s.gearCd;
+            }
+            carriedDrones.add(c);
+        });
+    }
+
+    void spawnCarriedDrones() {
+        Unit hero = Vars.player.unit();
+        for (CarriedDrone c : carriedDrones) {
+            UnitType type = Vars.content.unit(c.type);
+            if (type == null) continue;
+
+            Unit u = type.spawn(hero.team, hero.x + Mathf.range(16f), hero.y + Mathf.range(16f));
+            if (u == null) continue;
+
+            if (type instanceof ChantDroneType) ChantDroneType.shrinesById.put(u.id, c.shrines);
+            if (c.gear != null && PlayerLoadout.find(c.gear) instanceof GearType g) {
+                CompanionDroneType.giveGear(u, g);
+                CompanionDroneType.ActionState s = CompanionDroneType.ActionState.get(u);
+                s.gearCharges = c.gearCharges;
+                s.gearCd = c.gearCd;
+            }
+        }
+        carriedDrones.clear();
+        carriedFrom = null;
+    }
+
+    public void noteDroneCount() {
+        if (!active() && !MockRun.active) return;
+        if (Vars.player == null) return;
+        Team team = Vars.player.team();
+        int n = 0;
+        for (Unit u : Groups.unit) {
+            if (u.team == team && u.isValid() && u.type instanceof CompanionDroneType) n++;
+        }
+        peakDrones = Math.max(peakDrones, n);
+    }
+
     public void update() {
         if (!active()) return;
         runTime += Time.delta;
@@ -133,6 +253,10 @@ public class RunState {
             persistTimer = 0f;
             persist();
         }
+        if (carriedDrones.any() && heroPresent() && (carriedFrom == null || Vars.state.rules.sector != carriedFrom)) {
+            spawnCarriedDrones();
+        }
+        noteDroneCount();
     }
 
     public static void persist() {
@@ -159,6 +283,10 @@ public class RunState {
         t.put(K_ITEMS, String.valueOf(r.itemsObtained));
         t.put(K_RELICS, String.valueOf(r.relicsObtained));
         t.put(K_RELICNAMES, r.relicNames.toString(","));
+        t.put(K_SHRINES, String.valueOf(r.shrinesThisSector));
+        t.put(K_CHANT, encodeChant(r));
+        t.put(K_DRONES, encodeDrones());
+        t.put(K_UNIQUES, consumedUniques.toString(","));
 
         PlayerLoadout l = r.pendingLoadout;
         if (l == null && Vars.player != null) {
@@ -220,6 +348,35 @@ public class RunState {
                 if (!s.isEmpty()) r.relicNames.add(s);
             }
         }
+
+        r.shrinesThisSector = Strings.parseInt(t.get(K_SHRINES, "0"), 0);
+        String chant = t.get(K_CHANT, "");
+        if (!chant.isEmpty()) {
+            for (String s : chant.split(",")) {
+                int i = s.lastIndexOf(':');
+                if (i <= 0) continue;
+                r.chantShrines.put(s.substring(0, i), Strings.parseInt(s.substring(i + 1), 0));
+            }
+        }
+
+        String droneValues = t.get(K_DRONES, "");
+        if (!droneValues.isEmpty()) {
+            for (String s : droneValues.split(",")) {
+                int i = s.indexOf(':');
+                if (i <= 0) continue;
+                int id = Strings.parseInt(s.substring(0, i), -1);
+                if (id < 0) continue;
+                ChantDroneType.shrinesById.put(id, Strings.parseInt(s.substring(i + 1), 0));
+            }
+        }
+        r.consumedUniques.clear();
+        String uniques = t.get(K_UNIQUES, "");
+        if (!uniques.isEmpty()) {
+            for (String s : uniques.split(",")) {
+                if (!s.isEmpty()) r.consumedUniques.add(s);
+            }
+        }
+
         current = r;
 
         usedMaps.clear();
@@ -247,6 +404,25 @@ public class RunState {
             }
         }
         return true;
+    }
+
+    static String encodeChant(RunState r) {
+        StringBuilder s = new StringBuilder();
+        for (ObjectIntMap.Entry<String> e : r.chantShrines) {
+            if (s.length() > 0) s.append(',');
+            s.append(e.key).append(':').append(e.value);
+        }
+        return s.toString();
+    }
+
+    static String encodeDrones() {
+        StringBuilder s = new StringBuilder();
+        Groups.unit.each(u -> {
+            if (!(u.type instanceof ChantDroneType) || !u.isValid()) return;
+            if (s.length() > 0) s.append(',');
+            s.append(u.id).append(':').append(ChantDroneType.shrinesById.get(u.id, 0));
+        });
+        return s.toString();
     }
 
     static String encode(PlayerLoadout l) {
@@ -362,6 +538,7 @@ public class RunState {
     }
 
     public void onHeroDeath(Unit unit) {
+        Vars.state.set(GameState.State.paused);
         runActive = false;
         runOver = true;
         spawnsEnabled = false;
@@ -372,7 +549,62 @@ public class RunState {
         RunStatsUi.show(this, false);
     }
 
+    public static float teleporterChargeFrac() {
+        for (var b : Groups.build) {
+            if (b instanceof Teleporter.TeleporterBuild tb) {
+                return tb.chargeFrac();
+            }
+        }
+        return 0f;
+    }
+
+    static void setSpawns(boolean on) {
+        if (active()) current.spawnsEnabled = on;
+        else if (MockRun.active) MockRun.spawnsEnabled = on;
+    }
+
+    public static boolean tryMrBones(Unit unit, PlayerLoadout l) {
+        if (!(active() || MockRun.active) || unit == null || l == null) return false;
+
+        RelicType bones = null;
+        for (RelicType r : l.passives) {
+            if (r.mrBones) { bones = r; break; }
+        }
+        if (bones == null) return false;
+        if (teleporterChargeFrac() < 0.25f) return false;
+
+        unit.apply(StatusEffects.invincible, 5*60);
+        unit.apply(StatusEffects.slow, 5*60);
+        unit.health = Math.max(unit.maxHealth * 0.05f, 1f);
+        PlayerCharUnitType.syncHealth(unit);
+
+        Groups.unit.each(u -> {
+            if (u.team == unit.team || !u.isValid()) return;
+            if (u.isBoss()) {
+                u.apply(StatusEffects.unmoving, 60f * 5f);
+                u.apply(StatusEffects.disarmed, 60f * 5f);
+            } else {
+                u.kill();
+            }
+        });
+
+        setSpawns(false);
+        Time.run(60f * 5f, () -> {
+            if (active()) {
+                if (!current.teleporterFullyCharged) current.spawnsEnabled = true;
+            } else if (MockRun.active && !MockRun.teleporterReady()) {
+                MockRun.spawnsEnabled = true;
+            }
+        });
+
+        l.takePassive(bones);
+        consumedUniques.add(bones.name);
+        RelicPickupToast.show(RelicPickupToast.ToastChannel.ABILITY, bones.localizedName, "Destroyed", bones.rarity, bones.icon, "");
+        return true;
+    }
+
     public void onVictory() {
+        Vars.state.set(GameState.State.paused);
         runActive = false;
         runOver = true;
         spawnsEnabled = false;
@@ -389,10 +621,12 @@ public class RunState {
     }
 
     public void prepareNextSector() {
+        captureDrones();
         stage++;
         teleporterMult = 1;
         teleporterFullyCharged = false;
         spawnsEnabled = true;
+        shrinesThisSector = 0;
         DefectUnitType.onSectorAdvance();
     }
 

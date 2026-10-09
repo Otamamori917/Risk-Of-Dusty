@@ -10,6 +10,7 @@ import arc.util.Reflect;
 import mindustry.Vars;
 import mindustry.game.EventType;
 import mindustry.gen.Icon;
+import mindustry.io.SaveVersion;
 import mindustry.mod.Mod;
 import mindustry.ui.Styles;
 import mindustry.ui.dialogs.BaseDialog;
@@ -17,13 +18,20 @@ import mindustry.ui.dialogs.SettingsMenuDialog;
 import mindustry.ui.fragments.MenuFragment;
 import mindustry.ui.fragments.PlacementFragment;
 import riskod.content.RiskodCont;
+import riskod.world.RiskodCommands;
 import riskod.world.bullets.LensWarp;
+import riskod.world.relic.RelicType;
+import riskod.world.ui.CommandHelpUi;
 import riskod.world.ui.LogbookUi;
 import riskod.world.RiskodMaps;
 import riskod.world.RiskodPlanet;
 import riskod.world.RunHooks;
 import riskod.world.unit.PlayerCharUnitType;
 import riskod.gen.EntityRegistry;
+
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
 
 import static mindustry.Vars.ui;
 
@@ -75,6 +83,23 @@ public class RiskOfDustryLoader extends Mod {
         }
         KeyCode k = slotKey(slot);
         return k != null && k != KeyCode.unknown && Core.input.keyTap(k);
+    }
+
+    public static boolean slotDown(int slot) {
+        if (rebinding) return false;
+        if (Vars.ui != null) {
+            try {
+                if (Vars.ui.chatfrag != null && Vars.ui.chatfrag.shown()) return false;
+            } catch (Throwable ignored) {}
+        }
+        KeyCode k = slotKey(slot);
+        return k != null && k != KeyCode.unknown && Core.input.keyDown(k);
+    }
+
+    public static boolean slotReleased(int slot) {
+        if (rebinding) return false;
+        KeyCode k = slotKey(slot);
+        return k != null && k != KeyCode.unknown && Core.input.keyRelease(k);
     }
 
     public static void startRebind(int slot) {
@@ -138,6 +163,7 @@ public class RiskOfDustryLoader extends Mod {
         if (!Vars.headless) LensWarp.register();
         RunHooks.register();
         loadKeybinds();
+        RiskodCommands.register();
 
         Vars.ui.settings.addCategory("@setting.riskod-title", Icon.units, t -> {
             t.pref(new SettingsMenuDialog.SettingsTable.Setting("riskod-binds-header") {
@@ -179,6 +205,19 @@ public class RiskOfDustryLoader extends Mod {
                     //        .colspan(2).width(220f).height(40f).padTop(10f).left().row();
                 }
             });
+
+            t.pref(new SettingsMenuDialog.SettingsTable.Setting(CommandHelpUi.SETTING) {
+                {
+                    title = "Sandbox command help";
+                }
+
+                @Override
+                public void add(SettingsMenuDialog.SettingsTable table) {
+                    table.check("Show command help when joining a sandbox map",
+                            Core.settings.getBool(name, true),
+                            v -> Core.settings.put(name, v)).colspan(2).left().padTop(8f).row();
+                }
+            });
         });
 
         Events.run(EventType.Trigger.update, () -> {
@@ -196,8 +235,8 @@ public class RiskOfDustryLoader extends Mod {
         Log.info("Risk of Dustry loading");
         EntityRegistry.register();
         RiskodCont.loadRelics();
-        RiskodCont.loadUnits();  //<unit
-        RiskodCont.loadHeros(); //<unit
+        RiskodCont.loadUnits();
+        RiskodCont.loadHeros();
         EntityRegistry.registerUnits();
         RiskodCont.loadBlocks();
         RiskodPlanet.load();
@@ -209,6 +248,12 @@ public class RiskOfDustryLoader extends Mod {
         Core.app.post(() -> {
             try {
                 ui.menufrag.desktopButtons.get(1).submenu.add(new MenuFragment.MenuButton("@riskod-logbook", Icon.info, LogbookUi::show));
+
+                for(RelicType r : RelicType.all){
+                    //r.load();
+                    r.loadIcon();
+                    r.validate();
+                }
 
             } catch (Exception err) {
                 Vars.ui.showException(err);

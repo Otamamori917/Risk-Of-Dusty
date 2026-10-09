@@ -1,11 +1,13 @@
 package riskod.world.defect;
 
+import arc.Core;
 import arc.graphics.Color;
 import arc.graphics.g2d.Draw;
 import arc.graphics.g2d.Lines;
 import arc.math.Angles;
 import arc.math.Mathf;
 import arc.struct.ObjectSet;
+import mindustry.Vars;
 import mindustry.content.Fx;
 import mindustry.entities.Units;
 import mindustry.entities.bullet.BulletType;
@@ -14,7 +16,9 @@ import mindustry.gen.Sounds;
 import mindustry.gen.Unit;
 import mindustry.graphics.Pal;
 import riskod.world.abilites.ChargedAbility;
+import riskod.world.abilites.CounterAbility;
 import riskod.world.abilites.KitSwapAbility;
+import riskod.world.abilites.SustainAbility;
 import riskod.world.run.PlayerLoadout;
 import riskod.world.run.RunState;
 
@@ -56,7 +60,7 @@ public class DefectAbilities {
     }
 
     public static class ThunderStrike extends DefectAbility {
-        public float basePerChannel = 40f;
+        public float basePerChannel = 25f;
         public float cone = 45f;
         public float range = 120f;
 
@@ -65,6 +69,7 @@ public class DefectAbilities {
             maxCharges = 2;
             cooldown = 180f;
             noCycleRefresh = true;
+            ensureDrawHook();
         }
 
         @Override
@@ -78,6 +83,17 @@ public class DefectAbilities {
 
             value =  dmg;
             parent = unit;
+
+            if (equippedBy(unit, l) && Core.settings.getBool("drawhitboxes")) {
+                BeamVis b = new BeamVis();
+                b.x = unit.x;
+                b.y = unit.y;
+                b.rot = unit.rotation;
+                b.range = range;
+                b.cone = cone;
+                b.width = 0;
+                beams.add(b);
+            }
         }
 
         @Override
@@ -93,7 +109,7 @@ public class DefectAbilities {
             float finalDmg = dmg;
             Units.nearbyEnemies(unit.team, unit.x, unit.y, r, u -> {
                 if (Angles.within(rot, unit.angleTo(u), cone)) {
-                    RunState.current.noteDamageDealt(finalDmg);
+                    if(RunState.active()) RunState.current.noteDamageDealt(finalDmg);
                     u.damage(finalDmg);
                     Fx.hitLancer.at(u.x, u.y);
                 }
@@ -104,20 +120,33 @@ public class DefectAbilities {
     }
 
     public static class ColdSnap extends DefectAbility {
-        public float range = 140;
-        public float cone = 12;
+        public float range = 156;
+        public float cone = 4;
 
         public ColdSnap() {
             energyCost = 2f;
             maxCharges = 2;
             cooldown = 320f;
             noCycleRefresh = true;
+            ensureDrawHook();
         }
+
         @Override
         public void update(Unit unit,PlayerLoadout l, int slot){
             super.update(unit,l,slot);
             value = Math.max(1f, unit.shield) * damageMul(l, slot);
             parent = unit;
+
+            if (equippedBy(unit, l) && Core.settings.getBool("drawhitboxes")) {
+                BeamVis b = new BeamVis();
+                b.x = unit.x;
+                b.y = unit.y;
+                b.rot = unit.rotation;
+                b.range = range;
+                b.cone = cone;
+                b.width = 6;
+                beams.add(b);
+            }
         }
 
         @Override
@@ -217,14 +246,16 @@ public class DefectAbilities {
     }
 
     public static class DoomAndGloom extends DefectAbility {
-        public float damage = 100f;
+        public float damage = 280f;
         public float range = 64f;
-        public float cone = 50f;
+        public float cone = 82f;
 
         public DoomAndGloom() {
             energyCost = 2f;
             maxCharges = 2;
             cooldown = 120f;
+            value = damage;
+            ensureDrawHook();
         }
 
         @Override
@@ -232,6 +263,17 @@ public class DefectAbilities {
             super.update(unit,l,slot);
             value = damage * damageMul(l, slot);
             parent = unit;
+
+            if (equippedBy(unit, l) && Core.settings.getBool("drawhitboxes")) {
+                BeamVis b = new BeamVis();
+                b.x = unit.x;
+                b.y = unit.y;
+                b.rot = unit.rotation;
+                b.range = range;
+                b.cone = cone;
+                b.width = 0;
+                beams.add(b);
+            }
         }
 
         @Override
@@ -263,6 +305,7 @@ public class DefectAbilities {
             maxCharges = 1;
             cooldown = 380f;
             noCycleRefresh = true;
+            value = damage;
         }
 
         @Override
@@ -270,6 +313,15 @@ public class DefectAbilities {
             super.update(unit,l,slot);
             value = damage * damageMul(l, slot);
             parent = unit;
+
+            if (!equippedBy(unit, l)) return;
+            RingVis v = new RingVis();
+            v.x = unit.x;
+            v.y = unit.y;
+            v.radius = range;
+            v.window = hit;
+            v.team = unit.team.color;
+            rings.add(v);
         }
 
         @Override
@@ -277,18 +329,21 @@ public class DefectAbilities {
             float r = range * rangeMul(l, slot);
             Unit target = Units.closestEnemy(unit.team, unit.x, unit.y, r, u -> true);
             if (target == null) {
+                hit = false;
                 toast("No target");
                 return true;
             }
             float dmg = damage * damageMul(l, slot);
             if (RunState.active()) {
-                    RunState.current.noteDamageDealt(dmg);
-                }
+                RunState.current.noteDamageDealt(dmg);
+            }
             target.damage(dmg);
             boolean killed = target.dead || !target.isValid() || target.health <= 0.001f;
             if (killed) {
+                hit = true;
                 s.triggerPassivesOf(unit, OrbType.dark, triggerAmount);
             }
+            hit = false;
             Fx.explosion.at(target.x, target.y);
             return true;
         }
@@ -353,6 +408,7 @@ public class DefectAbilities {
             maxCharges = 1;
             cooldown = 460f;
             noCycleRefresh = true;
+            value = damage;
         }
 
         @Override
@@ -360,6 +416,15 @@ public class DefectAbilities {
             super.update(unit,l,slot);
             value = damage * damageMul(l, slot);
             parent = unit;
+
+            if (!equippedBy(unit, l)) return;
+            RingVis v = new RingVis();
+            v.x = unit.x;
+            v.y = unit.y;
+            v.radius = range;
+            v.window = hit;
+            v.team = unit.team.color;
+            rings.add(v);
         }
 
         @Override
@@ -368,14 +433,17 @@ public class DefectAbilities {
             Unit target = Units.closestEnemy(unit.team, unit.x, unit.y, r, u -> true);
             if (target != null) {
                 float dmg = damage * damageMul(l, slot);
+                hit = true;
                 target.damage(dmg);
                 if (RunState.active()) {
                     RunState.current.noteDamageDealt(dmg);
                 }
                 Fx.massiveExplosion.at(target.x, target.y);
             } else {
+                hit = false;
                 toast("No target");
             }
+            hit = false;
             s.channel(unit, OrbType.plasma, 3);
             return true;
         }
@@ -430,15 +498,17 @@ public class DefectAbilities {
 
     public static class HyperBeam extends DefectAbility {
         public float damage = 800f;
-        public float cone = 10f;
+        public float cone = 1f;
         public int focusCost = 5;
-        public float range = 250f;
+        public float range = 280f;
 
         public HyperBeam() {
             energyCost = 3f;
             maxCharges = 1;
             cooldown = 560f;
             noCycleRefresh = true;
+            value = damage;
+            ensureDrawHook();
         }
 
         @Override
@@ -446,6 +516,17 @@ public class DefectAbilities {
             super.update(unit,l,slot);
             value = damage * damageMul(l, slot);
             parent = unit;
+
+            if (equippedBy(unit, l) && Core.settings.getBool("drawhitboxes")) {
+                BeamVis b = new BeamVis();
+                b.x = unit.x;
+                b.y = unit.y;
+                b.rot = unit.rotation;
+                b.range = range;
+                b.cone = cone;
+                b.width = 10;
+                beams.add(b);
+            }
         }
 
         @Override
@@ -472,7 +553,7 @@ public class DefectAbilities {
     public static class EchoForm extends DefectAbility {
         public EchoForm() {
             energyCost = 2f;
-            maxCharges = 1;
+            maxCharges = 4;
             cooldown = 800f;
             noCycleRefresh = true;
         }

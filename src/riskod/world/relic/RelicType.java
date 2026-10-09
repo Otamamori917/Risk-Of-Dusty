@@ -1,23 +1,28 @@
 package riskod.world.relic;
 
+import arc.Core;
 import arc.graphics.g2d.TextureRegion;
 import arc.struct.Seq;
+import mindustry.Vars;
 import mindustry.entities.abilities.Ability;
 import mindustry.type.UnitType;
+import riskod.world.meta.Meta;
+import riskod.world.meta.UnlockReq;
 import riskod.world.run.RunState;
 
 public class RelicType {
     public static final Seq<RelicType> all = new Seq<>();
 
-    public String name;
+    public final String name;
     public String localizedName;
     public String description = "";
+    public boolean outline = true;
     public TextureRegion icon;
-
     public int rarity = 1;
+
     public SlotKind slotKind = SlotKind.passive;
-    public int equipSlot = 0;
-    public int bonusSlot = -1;
+    public ApplyType equipApplyto = ApplyType.primary;
+    public ApplyType bonusApplyTo = ApplyType.ALL;
     public Ability ability;
 
     public float healthMul = 1f;
@@ -30,10 +35,6 @@ public class RelicType {
     public float abilityCooldownMul = 1f;
     public float abilityDamageMul = 1f;
     public float abilityRangeMul = 1f;
-    public float abilityReloadMul = 1f;
-
-    public UnitType requiredHero;
-    public final Seq<UnitType> onlyHeroes = new Seq<>();
 
     public int bonusFocus = 0;
     public int bonusOrbCapacity = 0;
@@ -42,16 +43,38 @@ public class RelicType {
     public int grantFocus = 0;
     public boolean plasmaBankPermanent = false;
 
+    public boolean unstackable = false;
+    public boolean smeared;
+    public boolean stuntMan;
+    public boolean obelisk;
+    public boolean negativeObelisk;
+    public boolean mrBones;
+
+    public UnlockReq unlock = UnlockReq.none();
+
+    public UnitType requiredHero;
+    public final Seq<UnitType> onlyHeroes = new Seq<>();
+
     public RelicType(String name) {
         this.name = name;
         this.localizedName = name;
         all.add(this);
     }
 
-    /** No-op if hero is null — prevents early load from unlocking by accident. */
+    public boolean unlocked() {
+        if (Meta.isForcedUnlocked("relic", name)) return true;
+        return unlock == null || unlock.met();
+    }
+
+    public RelicType validate() {
+        if (equipApplyto == ApplyType.ALL || equipApplyto == ApplyType.allMain || equipApplyto == ApplyType.gear) {
+            throw new IllegalArgumentException("Relic '" + name + "': equipApplyTo cannot be " + equipApplyto.name());
+        }
+        return this;
+    }
+
     public RelicType forHero(UnitType hero) {
-        if (hero == null) return this;
-        requiredHero = hero;
+        if (hero != null) requiredHero = hero;
         return this;
     }
 
@@ -66,31 +89,41 @@ public class RelicType {
     }
 
     public boolean canDropFor(UnitType hero) {
+        if (!unlocked()) return false;
         if (requiredHero == null && onlyHeroes.isEmpty()) return true;
         if (hero == null) return false;
         if (requiredHero != null && !sameHero(requiredHero, hero)) return false;
         if (onlyHeroes.any()) {
-            boolean ok = false;
             for (UnitType h : onlyHeroes) {
-                if (sameHero(h, hero)) { ok = true; break; }
+                if (sameHero(h, hero)) return true;
             }
-            if (!ok) return false;
+            return false;
         }
         return true;
     }
 
-    static boolean sameHero(UnitType a, UnitType b) {
+    private static boolean sameHero(UnitType a, UnitType b) {
         if (a == null || b == null) return false;
         if (a == b) return true;
         return a.name != null && a.name.equals(b.name);
     }
 
     public boolean canDropForCurrentRun() {
-        UnitType hero = RunState.current != null ? RunState.current.heroType : null;
+        if (RunState.consumedUniques.contains(name)) return false;
+        UnitType hero = RunState.current != null ? RunState.current.heroType
+                : (Vars.player != null && Vars.player.unit() != null ? Vars.player.unit().type : null);
         return canDropFor(hero);
     }
 
     public enum SlotKind {
         passive, ability, weapon, gear
+    }
+
+    public enum ApplyType {
+        primary, secondary, utility, special, gear, allMain, ALL
+    }
+
+    public void loadIcon() {
+        icon = Core.atlas.find("riskod-" + name, Core.atlas.find("riskod-sprite"));
     }
 }

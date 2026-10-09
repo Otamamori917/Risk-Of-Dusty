@@ -22,6 +22,7 @@ import mindustry.world.Block;
 import mindustry.world.Tile;
 import riskod.world.meta.Meta;
 import riskod.world.relic.RelicType;
+import riskod.world.run.MockRun;
 import riskod.world.run.PlayerLoadout;
 import riskod.world.run.RunState;
 import riskod.world.unit.HuntHeroAI;
@@ -222,6 +223,7 @@ public class Shrine extends Block {
             float paid = pay(opener);
             attempts++;
             Meta.shrineActivated();
+            if (RunState.active()) RunState.current.noteShrine();
 
             if (chanceToFail > 0f && Mathf.chance(chanceToFail)) {
                 toast("You made an offering but gained nothing");
@@ -306,6 +308,10 @@ public class Shrine extends Block {
                 if (RunState.current != null) {
                     RunState.current.teleporterMult += copies;
                     toast("Teleporter Strength: " + RunState.teleporterMult() + "X");
+                }
+                if (MockRun.active) {
+                    MockRun.teleporterMult += copies;
+                    toast("Teleporter Strength: " + MockRun.teleporterMult() + "X");
                 }
             }
         }

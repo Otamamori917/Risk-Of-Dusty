@@ -148,6 +148,7 @@ public class InteractablesGenerator {
     }
 
     static Tile findSpot(int w, int h, int size) {
+        int o = -(size - 1) / 2;
         for (int attempt = 0; attempt < 50; attempt++) {
             int tx = Mathf.random(marginTiles, Math.max(marginTiles + 1, w - marginTiles - size));
             int ty = Mathf.random(marginTiles, Math.max(marginTiles + 1, h - marginTiles - size));
@@ -159,7 +160,7 @@ public class InteractablesGenerator {
             boolean ok = true;
             for (int dx = 0; dx < size && ok; dx++) {
                 for (int dy = 0; dy < size && ok; dy++) {
-                    Tile t = Vars.world.tile(tx + dx, ty + dy);
+                    Tile t = Vars.world.tile(tx + dx + o, ty + dy + o);
                     if (t == null || t.solid() || t.block() != Blocks.air || !t.floor().placeableOn) {
                         ok = false;
                     }

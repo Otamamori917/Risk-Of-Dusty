@@ -9,6 +9,7 @@ import mindustry.gen.Unit;
 import mindustry.type.UnitType;
 import mindustry.world.Tile;
 import riskod.world.RiskodPlanet;
+import riskod.world.abilites.KitSwapAbility;
 import riskod.world.block.Teleporter;
 import riskod.world.unit.PlayerCharUnitType;
 
@@ -94,8 +95,19 @@ public class HeroSpawner {
             PlayerCharUnitType.loadouts.put(unit.id, pending);
             pending.recompute();
             RunState.current.pendingLoadout = null;
+        } else if (unit.type instanceof PlayerCharUnitType pc
+                && RunState.current.heroType == pc) {
+            PlayerLoadout l = HeroKitPrefs.buildLoadout(pc);
+            PlayerCharUnitType.loadouts.put(unit.id, l);
         } else {
             PlayerCharUnitType.loadout(unit);
+        }
+
+        PlayerLoadout l = PlayerCharUnitType.loadout(unit);
+        KitSwapAbility swap = KitSwapAbility.find(l);
+        if (swap != null) {
+            swap.applyPrefsSelection(unit, RunState.current.heroType);
+            swap.applyCurrentKit(unit, l);
         }
     }
 

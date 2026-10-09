@@ -28,6 +28,7 @@ import riskod.world.RiskodMaps;
 import riskod.world.meta.Meta;
 import riskod.world.relic.RelicType;
 import riskod.world.run.EnemySpawnDirector;
+import riskod.world.run.MockRun;
 import riskod.world.run.RunState;
 import riskod.world.unit.HuntHeroAI;
 import riskod.world.unit.PlayerCharUnitType;
@@ -161,15 +162,20 @@ public class Teleporter extends Block {
             bossDropGiven = false;
 
             Seq<UnitType> pool = useBosses();
-            if (pool.isEmpty()) {
+            if (MockRun.boss == null && pool.isEmpty()) {
                 phase = Phase.charging;
                 toast("No boss pool — charging");
                 return;
             }
 
             phase = Phase.boss;
-            UnitType type = pool.random();
-            int n = RunState.teleporterMult();
+            UnitType type = MockRun.active ? MockRun.boss : pool.random();
+            int n = 0;
+            if (RunState.active()) {
+                n = RunState.teleporterMult();
+            } else if (MockRun.active) {
+                n = MockRun.teleporterMult();
+            }
             float base = Mathf.random(360f);
             for (int i = 0; i < n; i++) {
                 float a = base + (360f / n) * i;
@@ -179,7 +185,8 @@ public class Teleporter extends Block {
                 if (boss == null) continue;
                 boss.apply(StatusEffects.boss);
                 bossIds.add(boss.id);
-                HuntHeroAI.apply(boss);
+                if (MockRun.active) MockRun.styleBoss(boss);
+                else HuntHeroAI.apply(boss);
                 if (RunState.active()) {
                     float mul = RunState.current.enemyStatMul() + EnemySpawnDirector.applyArchBuff(boss);
                     boss.maxHealth(boss.maxHealth * mul);
@@ -219,7 +226,12 @@ public class Teleporter extends Block {
         }
 
         void dropBossRelics() {
-            int n = RunState.teleporterMult();
+            int n = 0;
+            if (RunState.active()) {
+                n = RunState.teleporterMult();
+            } else if (MockRun.active) {
+                n = MockRun.teleporterMult();
+            }
             float base = Mathf.random(360f);
             UnitType hero = RunState.current != null ? RunState.current.heroType : null;
             Seq<RelicType> rare = useRareRelics();
@@ -278,6 +290,10 @@ public class Teleporter extends Block {
 
         void transfer(Unit opener) {
             if (phase != Phase.ready) return;
+            if (MockRun.active) {
+                MockRun.end();
+                return;
+            }
             phase = Phase.done;
 
             Meta.mapEscape();

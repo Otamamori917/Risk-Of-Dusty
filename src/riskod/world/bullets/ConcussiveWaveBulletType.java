@@ -1,6 +1,9 @@
 package riskod.world.bullets;
 
+import arc.Core;
 import arc.graphics.Color;
+import arc.graphics.g2d.Draw;
+import arc.graphics.g2d.Lines;
 import arc.graphics.gl.FrameBuffer;
 import arc.math.Angles;
 import arc.math.Mathf;
@@ -30,9 +33,6 @@ public class ConcussiveWaveBulletType extends BulletType {
     public float rayWidth = 10f;
     /** Pitch shift per successive wave. */
     public float soundPitchStep = 0.06f;
-
-    public Color waveColor = Color.valueOf("c8d0e0");
-    public Color waveColorDark = Color.valueOf("4a5060");
 
     public ConcussiveWaveBulletType() {
         speed = 14f;
@@ -113,6 +113,34 @@ public class ConcussiveWaveBulletType extends BulletType {
         LensWarp.add(b.x, b.y, rayLength * 2f, 4f, 40f, b.rotation(), cone/2);
         float pitch = 1f + wave * soundPitchStep;
         Sounds.shootMissileLong.at(b.x, b.y, pitch, 0.7f + wave * 0.05f);
+    }
+
+
+    @Override
+    public void draw(Bullet b) {
+        if (!Core.settings.getBool("drawhitboxes")) return;
+
+        float base = b.rotation();
+        Draw.color(Color.green, 0.45f);
+        Lines.stroke(1.5f);
+
+        int wave = b.data instanceof Integer i ? i : 0;
+        Tmp.v1.trns(base - cone, rayLength).add(b.x, b.y);
+        Tmp.v2.trns(base + cone, rayLength).add(b.x, b.y);
+        Lines.line(b.x, b.y, Tmp.v1.x, Tmp.v1.y);
+        Lines.line(b.x, b.y, Tmp.v2.x, Tmp.v2.y);
+        Lines.arc(b.x, b.y, rayLength, cone * 2f, base - cone);
+
+        int rays = hitsPerWave != null && wave > 0 && wave - 1 < hitsPerWave.length
+                ? Math.max(1, hitsPerWave[Math.min(wave - 1, hitsPerWave.length - 1)])
+                : 1;
+        for (int i = 0; i < rays; i++) {
+            float ang = base;
+            if (rays > 1) ang += Mathf.lerp(-cone, cone, i / (rays - 1f));
+            Tmp.v1.trns(ang, rayLength).add(b.x, b.y);
+            Lines.line(b.x, b.y, Tmp.v1.x, Tmp.v1.y);
+        }
+        Draw.reset();
     }
 
     static float distToSegment(float px, float py, float x1, float y1, float x2, float y2) {

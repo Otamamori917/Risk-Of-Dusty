@@ -6,6 +6,7 @@ import arc.util.Time;
 import mindustry.Vars;
 import mindustry.entities.abilities.Ability;
 import mindustry.gen.Unit;
+import riskod.world.relic.GearType;
 import riskod.world.unit.PlayerCharUnitType;
 import riskod.world.run.PlayerLoadout;
 
@@ -27,7 +28,9 @@ public class ChargedAbility extends Ability {
         public boolean inited;
     }
 
-    public void refreshAll(Unit unit,PlayerLoadout l){
+    public void refreshAll(Unit unit, PlayerLoadout l) {
+        if (unit == null || l == null) return;
+
         ObjectSet<ChargedAbility> seen = new ObjectSet<>();
         for (int i = 0; i < PlayerLoadout.SLOT_COUNT; i++) {
             var r = l.slots[i];
@@ -46,6 +49,11 @@ public class ChargedAbility extends Ability {
                     }
                 }
             }
+        }
+
+        if (l.gear() != null) {
+            l.gearCharges = l.effectiveGearMax();
+            l.gearCooldownTimer = 0f;
         }
     }
 
@@ -70,8 +78,7 @@ public class ChargedAbility extends Ability {
 
     public float effectiveCooldown(PlayerLoadout loadout, int slot) {
         float cdMul = loadout == null ? 1f : loadout.slotCooldownMul(slot);
-        float relMul = loadout == null ? 1f : loadout.slotReloadMul(slot);
-        return Math.max(1f, cooldown * cdMul * relMul);
+        return Math.max(1f, cooldown * cdMul);
     }
 
     public float damageMul(PlayerLoadout loadout, int slot) {

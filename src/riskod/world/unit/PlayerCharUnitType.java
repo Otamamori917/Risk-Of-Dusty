@@ -7,6 +7,10 @@ import arc.struct.Seq;
 import mindustry.gen.Unit;
 import mindustry.type.UnitType;
 import riskod.RiskOfDustryLoader;
+import riskod.world.meta.Meta;
+import riskod.world.meta.UnlockReq;
+import riskod.world.run.HeroKitPrefs;
+import riskod.world.run.MockRun;
 import riskod.world.run.PlayerLoadout;
 import riskod.world.run.RunState;
 import riskod.world.relic.RelicType;
@@ -20,6 +24,7 @@ public class PlayerCharUnitType extends UnitType {
     static final IntFloatMap lastHealth = new IntFloatMap();
 
     public RelicType[] startingSlots = new RelicType[PlayerLoadout.SLOT_COUNT];
+    public UnlockReq unlock = UnlockReq.none();
     public boolean heroSelect = true;
 
     public PlayerCharUnitType(String name) {
@@ -35,21 +40,31 @@ public class PlayerCharUnitType extends UnitType {
         }
     }
 
+    public boolean unlocked() {
+        if (Meta.isForcedUnlocked("hero", name)) return true;
+        return unlock == null || unlock.met();
+    }
+
     public static PlayerLoadout loadout(Unit unit) {
         if (unit == null) return null;
         PlayerLoadout l = loadouts.get(unit.id);
         if (l == null) {
             l = new PlayerLoadout();
-            if (unit.type instanceof PlayerCharUnitType pc && pc.startingSlots != null) {
-                for (int i = 0; i < PlayerLoadout.SLOT_COUNT; i++) {
-                    if (i < pc.startingSlots.length) {
-                        l.slots[i] = pc.startingSlots[i];
+            if (unit.type instanceof PlayerCharUnitType pc) {
+                if (RunState.current == null || RunState.pendingLoadout == null) {
+                    if (RunState.current != null && RunState.current.heroType == pc) {
+                        PlayerLoadout built = HeroKitPrefs.buildLoadout(pc);
+                        System.arraycopy(built.slots, 0, l.slots, 0, PlayerLoadout.SLOT_COUNT);
+                        l.gearCharges = built.gearCharges;
+                        l.recompute();
+                    } else if (pc.startingSlots != null) {
+                        for (int i = 0; i < PlayerLoadout.SLOT_COUNT; i++) {
+                            if (i < pc.startingSlots.length) l.slots[i] = pc.startingSlots[i];
+                        }
+                        if (l.gear() != null) l.gearCharges = l.effectiveGearMax();
+                        l.recompute();
                     }
                 }
-                if (l.gear() != null) {
-                    l.gearCharges = l.effectiveGearMax();
-                }
-                l.recompute();
             }
             loadouts.put(unit.id, l);
         }
@@ -97,13 +112,46 @@ public class PlayerCharUnitType extends UnitType {
         }
     }
 
+    /** Alternates per slot 0–4 (gear = 4). Defaults stay in startingSlots. */
+    @SuppressWarnings("unchecked")
+    public final Seq<HeroAlt>[] slotAlts = new Seq[PlayerLoadout.SLOT_COUNT];
+
+    {
+        for (int i = 0; i < slotAlts.length; i++) slotAlts[i] = new Seq<>();
+    }
+
+    public Seq<HeroAlt> altsFor(int slot) {
+        if (slot < 0 || slot >= slotAlts.length) return null;
+        return slotAlts[slot];
+    }
+
+    public PlayerCharUnitType alt(int slot, RelicType relic, UnlockReq unlock) {
+        if (slot >= 0 && slot < slotAlts.length && relic != null) {
+            slotAlts[slot].add(new HeroAlt(relic, unlock));
+        }
+        return this;
+    }
+
+    public PlayerCharUnitType alt(int slot, RelicType relic) {
+        return alt(slot, relic, UnlockReq.none());
+    }
+
     void trackHealth(Unit unit) {
-        if (!RunState.active() || mindustry.Vars.player == null || mindustry.Vars.player.unit() != unit) return;
+        boolean run = RunState.active();
+        if (!(run || MockRun.active) || mindustry.Vars.player == null || mindustry.Vars.player.unit() != unit) return;
         float prev = lastHealth.get(unit.id, -1f);
-        if (prev >= 0f) {
+        if (run && prev >= 0f) {
             float delta = unit.health - prev;
             if (delta > 0f) RunState.current.noteHealing(delta);
             else if (delta < 0f) RunState.current.noteDamageReceived(-delta);
+        }
+
+        if (unit.health <= 20f) {
+            PlayerLoadout l = loadout(unit);
+            if (l != null && RunState.tryMrBones(unit, l)) {
+                lastHealth.put(unit.id, unit.health);
+                return;
+            }
         }
         lastHealth.put(unit.id, unit.health);
     }
